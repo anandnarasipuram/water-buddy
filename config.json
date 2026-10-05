@@ -1,0 +1,32 @@
+{
+  "yourName": "Anand",
+  "avatars": "all",
+  "avatarHeight": 260,
+  "bottomMargin": 12,
+  "spriteFacesRight": true,
+  "sneaky": true,
+  "vehicles": { "jet": 3, "scooter": 1, "car": 1, "train": 1 },
+  "vehicleChance": 0.7,
+  "intervalMinutes": 60,
+  "snoozeMinutes": 10,
+  "activeHours": [8, 23],
+  "walkSpeed": 90,
+  "hotkey": "CommandOrControl+Alt+P",
+  "presenting": {
+    "contentProtection": true,
+    "checkEverySeconds": 5,
+    "resumeDelaySeconds": 20,
+    "processNames": ["CptHost"],
+    "scanWindowTitles": true,
+    "windowTitlePatterns": [
+      "is sharing your screen",
+      "stop sharing",
+      "you are screen sharing",
+      "you're sharing",
+      "you are sharing",
+      "sharing control bar",
+      "sharing toolbar",
+      "zoom share"
+    ]
+  }
+}

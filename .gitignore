@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+
+# Personal photos stay on this Mac
+originals/
+avatars/**/*.png
+avatars/**/*.jpg
+avatars/**/*.jpeg
+avatars/**/*.webp
+avatars/**/*.gif

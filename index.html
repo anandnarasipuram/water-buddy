@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; font-family: -apple-system, 'SF Pro Rounded', 'Helvetica Neue', sans-serif; }
+  #actor { position: absolute; bottom: 70px; left: 0; display: none; z-index: 1; will-change: transform; }
+  #lift { position: relative; transform-origin: bottom center; }
+  #figure { transition: opacity 0.2s; }
+  #lift.hop-down { animation: hop-down 0.55s ease-out both; }
+  #lift.hop-up { animation: hop-up 0.45s ease-in both; }
+  @keyframes hop-down { 0% { transform: translateY(-45px) scale(0.96, 1.04); } 55% { transform: translateY(4px) scale(1.04, 0.94); } 100% { transform: translateY(0) scale(1, 1); } }
+  @keyframes hop-up { 0% { transform: translateY(0); opacity: 1; } 45% { transform: translateY(-50px); opacity: 1; } 100% { transform: translateY(-20px); opacity: 0; } }
+  #vehicle { position: absolute; bottom: 70px; left: 0; display: none; z-index: 2; pointer-events: none; will-change: transform; }
+  #vsvg, #vsvg svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  #vehicle.moving svg { animation: rumble 0.25s ease-in-out infinite; }
+  @keyframes rumble { 50% { transform: translateY(-2px); } }
+  .wheel { transform-box: fill-box; transform-origin: center; }
+  #vehicle.moving .wheel { animation: spin 0.4s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .puff { opacity: 0; transform-box: fill-box; transform-origin: center; animation: puff 1.8s ease-out infinite; }
+  @keyframes puff { 0% { opacity: 0.85; transform: translate(0, 0) scale(0.5); } 100% { opacity: 0; transform: translate(-40px, -70px) scale(2.2); } }
+  #vsay { position: absolute; bottom: 100%; left: 85%; transform: translateX(-50%); margin-bottom: 6px; display: none; white-space: nowrap; font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 2px 0 #1c7ed6, 0 0 8px rgba(0,0,0,0.6); }
+  #lift.rise { animation: rise 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  #lift.drop { animation: drop 1s cubic-bezier(0.3, 0, 0.6, 1) both; }
+  #lift.sink { animation: sink 0.6s ease-in both; }
+  @keyframes rise { from { transform: translateY(160%); } to { transform: translateY(0); } }
+  @keyframes drop { 0% { transform: translateY(-120vh); } 60% { transform: translateY(0); } 75% { transform: translateY(-30px); } 88% { transform: translateY(0); } 94% { transform: translateY(-8px); } 100% { transform: translateY(0); } }
+  @keyframes sink { from { transform: translateY(0); } to { transform: translateY(160%); } }
+  #sprite { display: block; cursor: pointer; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 8px 12px rgba(0,0,0,0.35)); }
+  #emoji { font-size: 140px; line-height: 1; cursor: pointer; user-select: none; }
+  .flip { transform: scaleX(-1); }
+  #bubble { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 8px; width: 270px; text-align: center; display: none; }
+  #bubble .text { font-size: 22px; font-weight: 800; line-height: 1.15; white-space: pre-line; color: #ffd24a; text-shadow: 0 2px 0 #d9480f, 0 0 8px rgba(0,0,0,0.6); margin-bottom: 10px; }
+  #bubble .buttons { display: flex; gap: 10px; justify-content: center; }
+  #bubble button { border: none; border-radius: 10px; padding: 9px 16px; font-size: 14px; font-weight: 600; color: #444; background: rgba(255,255,255,0.95); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  #bubble button:hover { background: #fff; transform: translateY(-1px); }
+  .bob { animation: bob 0.45s ease-in-out infinite; }
+  .bob-slow { animation: bob 0.9s ease-in-out infinite; }
+  .tiptoe { animation: tiptoe 0.8s ease-in-out infinite; transform-origin: bottom center; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  @keyframes tiptoe { 0%, 100% { transform: translateY(0) scaleY(0.95); } 50% { transform: translateY(-3px) scaleY(1); } }
+</style>
+</head>
+<body>
+<div id="actor">
+  <div id="lift">
+    <div id="bubble">
+      <div class="text" id="bubbleText"></div>
+      <div class="buttons" id="bubbleButtons">
+        <button id="yesBtn">YES</button>
+        <button id="laterBtn">Remind me later</button>
+      </div>
+    </div>
+    <div id="figure">
+      <img id="sprite" alt="">
+      <div id="emoji">🧍</div>
+    </div>
+  </div>
+</div>
+<div id="vehicle">
+  <div id="vsay"></div>
+  <div id="vsvg"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const actor = $('actor');
+const lift = $('lift');
+const figure = $('figure');
+const sprite = $('sprite');
+const emoji = $('emoji');
+const bubble = $('bubble');
+const bubbleText = $('bubbleText');
+const bubbleButtons = $('bubbleButtons');
+const vehicle = $('vehicle');
+const vsay = $('vsay');
+const vsvg = $('vsvg');
+
+const POSE_EMOJI = { idle: '', ask: '🥤', happy: '🙌', sad: '😞', walk: '', sneak: '🤫', peek: '👀' };
+const FALLBACK = { sneak: ['sneak', 'walk', 'idle'], peek: ['peek', 'idle'], walk: ['walk', 'idle'] };
+
+const ASK_TEXTS = {
+  plain: ['Hey {name}!\nDid you drink water?'],
+  sneak: ['Hey {name}…\ndid you drink water?', 'Psst… {name}.\nWater? 💧'],
+  stalk: ['Psst… {name}.\nWater? 👀', 'Found you!\nDid you drink water?'],
+  peek: ['Boo!\nDid you drink water?', 'Peekaboo!\nWater time? 💧'],
+  rise: ['Surprise!\nWater time? 💧', 'Hey {name}!\nDid you drink water?'],
+  drop: ['Incoming!\nDid you drink water?', 'Heads up, {name}!\nWater? 💧'],
+  ride: ['Special delivery! 💧\nDid you drink water?', 'Came all this way, {name}…\nDid you drink water?', 'Pit stop! 🏁\nWater time, {name}?'],
+  jet: ['Flew your water in, {name}! ✈️\nDid you drink water?', 'Private jet, just for you 💧\nDid you drink water?'],
+  again: ['Ahem…\nDid you drink water?', 'Still waiting, {name}…\nWater? 👀']
+};
+const YES_TEXTS = ['Nice! Stay hydrated 💧', 'That\'s what I like to see!', 'Proud of you, {name} 💪'];
+const LATER_TEXTS = ['Okay… I\'ll be here 😞', 'Fine. I\'ll just wait… 😒', 'I\'ll be watching 👀'];
+const WHISPERS = ['psst… 👀', 'water… 💧', '*stares*'];
+
+const wheel = (cx, cy, r, tyre, hub) => `
+  <g class="wheel">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${tyre}"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 0.45}" fill="${hub}"/>
+    <path d="M${cx} ${cy - r * 0.8}V${cy + r * 0.8}M${cx - r * 0.8} ${cy}H${cx + r * 0.8}" stroke="#777" stroke-width="3"/>
+  </g>`;
+
+// Sizes are for a 260px avatar and scale with avatarHeight. Vehicles face right.
+// seat: x of the rider's centre; sink: how far the rider is lowered; clip: px above ground hidden below the rider.
+const VEHICLES = {
+  scooter: {
+    w: 230, h: 150, seat: 82, sink: 30, clip: 72, sound: 'beep beep! 🛵',
+    svg: `<svg viewBox="0 0 230 150">
+      ${wheel(50, 126, 22, '#2b2b2b', '#ddd')}
+      ${wheel(185, 126, 22, '#2b2b2b', '#ddd')}
+      <path d="M18 112 Q14 84 46 80 L118 80 Q132 82 134 100 L136 116 Q100 122 22 120 Z" fill="#5ec4b6" stroke="#2f7f74" stroke-width="3"/>
+      <rect x="34" y="70" width="82" height="14" rx="7" fill="#4a3b35"/>
+      <rect x="110" y="110" width="60" height="10" rx="4" fill="#3c3c3c"/>
+      <path d="M150 118 L166 38 L184 38 L198 112 Q190 122 180 120 Z" fill="#5ec4b6" stroke="#2f7f74" stroke-width="3"/>
+      <path d="M150 30 H202" stroke="#333" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="191" cy="56" r="8" fill="#fff6b0" stroke="#2f7f74" stroke-width="2"/>
+    </svg>`
+  },
+  car: {
+    w: 330, h: 130, seat: 140, sink: 50, clip: 60, sound: 'honk honk! 🚗',
+    svg: `<svg viewBox="0 0 330 130">
+      <path d="M8 98 Q4 64 30 58 L120 54 Q190 50 230 56 L296 64 Q326 70 324 96 L322 104 L288 104 A30 30 0 0 0 228 104 L102 104 A30 30 0 0 0 42 104 Z" fill="#ef5a4c" stroke="#a8322a" stroke-width="3"/>
+      <path d="M30 78 L300 82" stroke="#fff" stroke-width="5" opacity="0.85"/>
+      <path d="M120 58 L118 100" stroke="#a8322a" stroke-width="2"/>
+      <rect x="128" y="66" width="18" height="5" rx="2" fill="#a8322a"/>
+      <path d="M214 56 L196 14 L205 12 L226 57 Z" fill="#bfe6ff" stroke="#555" stroke-width="3" opacity="0.9"/>
+      <ellipse cx="194" cy="44" rx="5" ry="14" fill="none" stroke="#333" stroke-width="4"/>
+      <ellipse cx="318" cy="78" rx="5" ry="8" fill="#fff6b0"/>
+      <rect x="5" y="70" width="7" height="12" rx="2" fill="#ffd24a"/>
+      ${wheel(72, 104, 25, '#2b2b2b', '#ddd')}
+      ${wheel(258, 104, 25, '#2b2b2b', '#ddd')}
+    </svg>`
+  },
+  train: {
+    w: 560, h: 210, seat: 95, sink: 70, clip: 20, sound: 'choo choo! 🚂',
+    svg: `<svg viewBox="0 0 560 210">
+      <circle class="puff" cx="481" cy="22" r="10" fill="#eee" style="animation-delay:0s"/>
+      <circle class="puff" cx="481" cy="22" r="10" fill="#eee" style="animation-delay:0.6s"/>
+      <circle class="puff" cx="481" cy="22" r="10" fill="#eee" style="animation-delay:1.2s"/>
+      <rect x="0" y="204" width="560" height="6" fill="#7a6a5a"/>
+      <rect x="2" y="10" width="292" height="16" rx="7" fill="#244f8f"/>
+      <path fill-rule="evenodd" d="M8 24 H288 V180 H8 Z M40 46 H150 V132 H40 Z M172 46 H262 V132 H172 Z" fill="#3d7dd8" stroke="#244f8f" stroke-width="3"/>
+      <rect x="40" y="46" width="110" height="86" fill="none" stroke="#fff" stroke-width="5"/>
+      <rect x="172" y="46" width="90" height="86" fill="none" stroke="#fff" stroke-width="5"/>
+      <rect x="8" y="148" width="280" height="9" fill="#ffd24a"/>
+      <rect x="286" y="160" width="20" height="8" fill="#333"/>
+      <path d="M470 84 V44 H462 V30 H500 V44 H492 V84 Z" fill="#222"/>
+      <rect x="394" y="84" width="140" height="94" rx="12" fill="#2f3b4a"/>
+      <path d="M430 84 V178 M480 84 V178" stroke="#ffd24a" stroke-width="5"/>
+      <rect x="298" y="8" width="104" height="16" rx="5" fill="#333"/>
+      <rect x="304" y="22" width="92" height="158" fill="#d64541" stroke="#8e2a26" stroke-width="3"/>
+      <rect x="322" y="44" width="56" height="46" fill="#bfe6ff" stroke="#fff" stroke-width="4"/>
+      <circle cx="540" cy="104" r="9" fill="#fff6b0" stroke="#222" stroke-width="2"/>
+      <path d="M532 172 L560 202 L516 202 Z" fill="#8e2a26"/>
+      ${wheel(50, 188, 16, '#222', '#bbb')}
+      ${wheel(110, 188, 16, '#222', '#bbb')}
+      ${wheel(190, 188, 16, '#222', '#bbb')}
+      ${wheel(250, 188, 16, '#222', '#bbb')}
+      ${wheel(345, 184, 20, '#222', '#d64541')}
+      ${wheel(430, 186, 18, '#222', '#d64541')}
+      ${wheel(495, 186, 18, '#222', '#d64541')}
+    </svg>`
+  },
+  // fly: altitude it lands from and takes off to; top: px above ground hidden above the rider.
+  jet: {
+    w: 520, h: 180, seat: 342, sink: 89, clip: 46, top: 144, fly: 300, speed: 440, ask: 'jet', sound: '✈️ Water Express!',
+    svg: `<svg viewBox="0 0 520 180">
+      <path d="M40 100 L14 8 L62 8 L118 70 Z" fill="#d4af37" stroke="#9c7d1e" stroke-width="3"/>
+      <text x="30" y="52" font-size="22">💧</text>
+      <rect x="84" y="20" width="96" height="30" rx="15" fill="#dfe3ea" stroke="#8a96a8" stroke-width="3"/>
+      <path fill-rule="evenodd" d="M40 66 Q40 36 84 36 H420 Q496 36 516 88 Q500 136 420 136 H76 Q40 136 40 108 Z M302 50 H384 Q396 50 396 62 V110 Q396 122 384 122 H302 Q290 122 290 110 V62 Q290 50 302 50 Z" fill="#f7f7f7" stroke="#8a96a8" stroke-width="3"/>
+      <rect x="290" y="50" width="106" height="72" rx="12" fill="none" stroke="#d4af37" stroke-width="5"/>
+      <path d="M442 50 Q482 54 500 80 L452 80 Z" fill="#2b3a55"/>
+      <circle cx="150" cy="72" r="9" fill="#2b3a55"/>
+      <circle cx="190" cy="72" r="9" fill="#2b3a55"/>
+      <circle cx="230" cy="72" r="9" fill="#2b3a55"/>
+      <circle cx="420" cy="72" r="9" fill="#2b3a55"/>
+      <path d="M46 128 H486" stroke="#d4af37" stroke-width="5"/>
+      <text x="96" y="116" font-family="-apple-system, sans-serif" font-size="17" font-weight="800" fill="#2b3a55">WATER EXPRESS</text>
+      <path d="M190 112 L262 112 L226 160 L172 160 Z" fill="#e3e6ec" stroke="#8a96a8" stroke-width="3"/>
+      <rect x="128" y="136" width="6" height="22" fill="#555"/>
+      <rect x="445" y="132" width="6" height="26" fill="#555"/>
+      ${wheel(131, 166, 12, '#222', '#bbb')}
+      ${wheel(448, 166, 12, '#222', '#bbb')}
+    </svg>`
+  }
+};
+
+let cfg = null;
+let current = { poses: {}, placeholder: '🧍' };
+let state = 'hidden';
+let x = 0;
+let move = null;
+let timers = [];
+let mouse = null;
+let interactive = false;
+let lastFrame = 0;
+let vx = 0;
+let alt = 0;
+let valt = 0;
+let rideToken = 0;
+
+const rand = (list) => list[Math.floor(Math.random() * list.length)];
+const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+const fill = (text) => text.replace('{name}', cfg.yourName);
+
+function later(fn, ms) {
+  const id = setTimeout(fn, ms);
+  timers.push(id);
+  return id;
+}
+
+function clearTimers() {
+  timers.forEach(clearTimeout);
+  timers = [];
+}
+
+function setState(next) {
+  state = next;
+  window.buddy.state(next);
+}
+
+function figureWidth() {
+  return figure.offsetWidth || 160;
+}
+
+function place() {
+  actor.style.transform = `translate(${x}px, ${-alt}px)`;
+}
+
+function moveTo(target, speed, done) {
+  move = { target, speed, done };
+}
+
+function setPose(pose) {
+  const chain = FALLBACK[pose] || [pose, 'idle'];
+  const key = chain.find((name) => current.poses[name]);
+  if (key) {
+    sprite.src = current.poses[key];
+    sprite.style.height = cfg.avatarHeight + 'px';
+    sprite.style.display = 'block';
+    emoji.style.display = 'none';
+  } else {
+    emoji.textContent = current.placeholder + (POSE_EMOJI[pose] || '');
+    emoji.style.display = 'block';
+    sprite.style.display = 'none';
+  }
+}
+
+function whenReady() {
+  return new Promise((resolve) => {
+    if (sprite.style.display === 'none' || sprite.complete) {
+      resolve();
+    } else {
+      sprite.onload = () => resolve();
+      sprite.onerror = () => resolve();
+    }
+  });
+}
+
+function setBobbing(mode) {
+  figure.classList.remove('bob', 'bob-slow', 'tiptoe');
+  if (mode) figure.classList.add(mode);
+}
+
+function setFlip(flip) {
+  sprite.classList.toggle('flip', flip);
+  emoji.classList.toggle('flip', flip);
+}
+
+function faceDir(delta) {
+  if (delta === 0) return;
+  setFlip(cfg.spriteFacesRight ? delta < 0 : delta > 0);
+}
+
+function showBubble(text, withButtons) {
+  bubbleText.textContent = text;
+  bubbleButtons.style.display = withButtons ? 'flex' : 'none';
+  bubble.style.display = 'block';
+}
+
+function hideBubble() {
+  bubble.style.display = 'none';
+}
+
+function finishHide() {
+  rideToken++;
+  alt = 0;
+  hideVehicle();
+  standUp();
+  figure.style.opacity = '';
+  actor.style.zIndex = '';
+  actor.style.display = 'none';
+  lift.className = '';
+  hideBubble();
+  setBobbing(null);
+  setState('hidden');
+  updateInteractive();
+}
+
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeIn = (t) => t * t * t;
+const scale = () => cfg.avatarHeight / 260;
+// vehicles is a list of names, or {name: weight} to make some show up more often.
+function vehicleNames() {
+  const v = cfg.vehicles;
+  const names = Array.isArray(v)
+    ? v
+    : Object.entries(v || {}).flatMap(([name, weight]) => Array(Math.max(0, Math.round(weight))).fill(name));
+  return names.filter((name) => VEHICLES[name]);
+}
+const wantsRide = () => vehicleNames().length > 0 && Math.random() < (cfg.vehicleChance ?? 0.5);
+
+// Animates over ms; never resolves if the ride is cancelled (finishHide bumps rideToken).
+function tween(ms, update, ease) {
+  const token = rideToken;
+  return new Promise((resolve) => {
+    const start = performance.now();
+    const step = (now) => {
+      if (token !== rideToken) return;
+      const t = Math.min((now - start) / ms, 1);
+      update(ease(t), t);
+      if (t < 1) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function wait(ms) {
+  return new Promise((resolve) => later(resolve, ms));
+}
+
+function showVehicle(v) {
+  const s = scale();
+  vsvg.innerHTML = v.svg;
+  vehicle.style.width = v.w * s + 'px';
+  vehicle.style.height = v.h * s + 'px';
+  vehicle.style.display = 'block';
+}
+
+function placeVehicle(pos, height = 0) {
+  vx = pos;
+  valt = height;
+  vehicle.style.transform = `translate(${pos}px, ${-height}px)`;
+}
+
+// Flight paths for vehicles with `fly`, by elapsed time: glide down to touch down, or climb after a take-off run.
+const landing = (v) => (time) => v.fly * scale() * Math.pow(1 - Math.min(time / 0.7, 1), 1.4);
+const takeoff = (v) => (time) => v.fly * scale() * 1.8 * Math.pow(Math.max(0, (time - 0.4) / 0.6), 1.5);
+
+function hideVehicle() {
+  vehicle.style.display = 'none';
+  vehicle.classList.remove('moving');
+  vsay.style.display = 'none';
+  vsvg.innerHTML = '';
+}
+
+function vehicleSays(text) {
+  vsay.textContent = text;
+  vsay.style.display = 'block';
+  later(() => (vsay.style.display = 'none'), 1500);
+}
+
+// Lower the avatar into the vehicle and hide whatever would poke out below the seat (or above the roof).
+function sitIn(v) {
+  const s = scale();
+  const sink = v.sink * s;
+  const cut = sink + v.clip * s;
+  const roof = v.top ? `calc(100% - ${sink + v.top * s}px)` : '-600px';
+  lift.style.transform = `translateY(${sink}px)`;
+  lift.style.clipPath = `polygon(-300px ${roof}, calc(100% + 300px) ${roof}, calc(100% + 300px) calc(100% - ${cut}px), -300px calc(100% - ${cut}px))`;
+  actor.style.zIndex = 1;
+}
+
+function standUp() {
+  lift.style.transform = '';
+  lift.style.clipPath = '';
+}
+
+function seatX(v) {
+  return vx + v.seat * scale() - figureWidth() / 2;
+}
+
+function driveTo(target, speed, ease, carry, altitude) {
+  const from = vx;
+  const ms = clamp(Math.abs(target - from) / (speed * scale()), 1.5, 4.5) * 1000;
+  vehicle.classList.add('moving');
+  return tween(ms, (t, time) => {
+    placeVehicle(from + (target - from) * t, altitude ? altitude(time) : 0);
+    if (carry) {
+      x = seatX(carry);
+      alt = valt;
+      place();
+    }
+  }, ease).then(() => vehicle.classList.remove('moving'));
+}
+
+async function rideIn(name) {
+  const v = VEHICLES[name || rand(vehicleNames())];
+  const s = scale();
+  const w = figureWidth();
+  const walk = 150 * s;
+  const minStop = 20 + walk + w / 2 - v.seat * s;
+  const maxStop = window.innerWidth - v.w * s - 20;
+  const stop = maxStop > minStop ? minStop + Math.random() * (maxStop - minStop) : Math.max(20, maxStop);
+
+  showVehicle(v);
+  placeVehicle(-v.w * s - 40, v.fly ? v.fly * s : 0);
+  sitIn(v);
+  setPose('idle');
+  setBobbing('bob-slow');
+  faceDir(1);
+  x = seatX(v);
+  alt = valt;
+  place();
+  actor.style.display = 'block';
+
+  await driveTo(stop, v.speed || 320, easeOut, v, v.fly && landing(v));
+  setBobbing(null);
+  await wait(450);
+
+  // Get out: vanish from the seat, land in front of the vehicle.
+  figure.style.opacity = '0';
+  await wait(220);
+  standUp();
+  actor.style.zIndex = 3;
+  figure.style.opacity = '';
+  lift.className = 'hop-down';
+  await wait(600);
+  lift.className = '';
+
+  vehicleSays(v.sound);
+  await wait(300);
+  driveTo(window.innerWidth + 40, v.speed || 380, easeIn, null, v.fly && takeoff(v)).then(hideVehicle);
+  setPose('walk');
+  setBobbing('bob');
+  faceDir(-1);
+  moveTo(x - walk, 150 * s, () => ask(v.ask || 'ride'));
+}
+
+async function rideOut() {
+  const v = VEHICLES[rand(vehicleNames())];
+  const s = scale();
+  const stop = x + figureWidth() / 2 - v.seat * s;
+
+  showVehicle(v);
+  placeVehicle(-v.w * s - 40, v.fly ? v.fly * s : 0);
+  actor.style.zIndex = 3;
+  setPose('idle');
+  setBobbing(null);
+  faceDir(-1);
+
+  await driveTo(stop, v.speed || 320, easeOut, null, v.fly && landing(v));
+  vehicleSays(v.sound);
+  await wait(500);
+
+  // Hop in, then ride away.
+  faceDir(1);
+  lift.className = 'hop-up';
+  await wait(450);
+  lift.className = '';
+  sitIn(v);
+  x = seatX(v);
+  place();
+  setBobbing('bob-slow');
+  await wait(400);
+  await driveTo(window.innerWidth + 40, v.speed || 380, easeIn, v, v.fly && takeoff(v));
+  finishHide();
+}
+
+function ask(kind) {
+  const maxX = window.innerWidth - figureWidth() - 20;
+  x = clamp(x, 20, maxX);
+  place();
+  standUp();
+  lift.className = '';
+  setState('asking');
+  setPose('ask');
+  setBobbing(null);
+  setFlip(false);
+  showBubble(fill(rand(ASK_TEXTS[kind])), true);
+}
+
+function settleThenAsk(kind) {
+  const maxX = window.innerWidth - figureWidth() - 20;
+  const target = clamp(x, 20, maxX);
+  if (Math.abs(target - x) > 1) {
+    setPose('walk');
+    setBobbing('bob');
+    faceDir(target - x);
+    moveTo(target, 200, () => ask(kind));
+  } else {
+    ask(kind);
+  }
+}
+
+async function enter(kind, vehicleName) {
+  clearTimers();
+  move = null;
+  setState('entering');
+  const poseFor = { sneak: 'sneak', stalk: 'sneak', peek: 'peek', plain: 'walk' };
+  setPose(poseFor[kind] || 'idle');
+  setFlip(false);
+  await whenReady();
+  if (kind === 'ride') {
+    rideIn(vehicleName);
+    return;
+  }
+
+  const w = figureWidth();
+  const sw = window.innerWidth;
+  const maxX = sw - w - 20;
+  const fromLeft = Math.random() < 0.5;
+  const offscreen = fromLeft ? -w - 30 : sw + 30;
+  const dir = fromLeft ? 1 : -1;
+
+  actor.style.display = 'block';
+  lift.className = '';
+
+  if (kind === 'plain') {
+    x = sw + 30;
+    place();
+    setBobbing('bob');
+    faceDir(-1);
+    moveTo(maxX - 140, 220, () => ask('plain'));
+  } else if (kind === 'sneak') {
+    x = offscreen;
+    place();
+    setBobbing('tiptoe');
+    faceDir(dir);
+    moveTo(clamp(sw * (0.3 + Math.random() * 0.4), 20, maxX), 45, () => ask('sneak'));
+  } else if (kind === 'stalk') {
+    const target = clamp((mouse ? mouse.x : sw / 2) - w / 2 + dir * (w + 40), 20, maxX);
+    x = target > sw / 2 ? -w - 30 : sw + 30;
+    place();
+    setBobbing('tiptoe');
+    faceDir(target - x);
+    moveTo(target, 55, () => ask('stalk'));
+  } else if (kind === 'peek') {
+    const left = fromLeft;
+    const partial = left ? -w * 0.62 : sw - w * 0.38;
+    const hidden = left ? -w * 0.98 : sw - w * 0.02;
+    const final = left ? 80 : maxX - 80;
+    x = offscreen;
+    place();
+    setBobbing(null);
+    faceDir(dir);
+    moveTo(partial, 90, () => {
+      later(() => {
+        faceDir(-dir);
+        moveTo(hidden, 140, () => {
+          later(() => {
+            setPose('walk');
+            setBobbing('bob');
+            faceDir(dir);
+            moveTo(final, 170, () => ask('peek'));
+          }, 900);
+        });
+      }, 1500);
+    });
+  } else {
+    x = clamp(Math.random() * sw, 40, maxX - 40);
+    place();
+    setBobbing(null);
+    lift.className = kind;
+    later(() => ask(kind), kind === 'drop' ? 1050 : 750);
+  }
+}
+
+function answerYes() {
+  window.buddy.answer('yes');
+  clearTimers();
+  move = null;
+  setState('celebrating');
+  setPose('happy');
+  setBobbing(null);
+  setFlip(false);
+  showBubble(fill(rand(YES_TEXTS)), false);
+  later(() => {
+    hideBubble();
+    leave();
+  }, 1700);
+}
+
+function leave() {
+  setState('leaving');
+  if (wantsRide()) {
+    rideOut();
+    return;
+  }
+  const kind = rand(cfg.sneaky ? ['walk', 'sneak', 'sink'] : ['walk']);
+  if (kind === 'sink') {
+    setPose('idle');
+    setBobbing(null);
+    lift.className = 'sink';
+    later(finishHide, 650);
+    return;
+  }
+  const w = figureWidth();
+  const sw = window.innerWidth;
+  const goLeft = x + w / 2 < sw / 2;
+  const target = goLeft ? -w - 40 : sw + 40;
+  setPose(kind);
+  setBobbing(kind === 'sneak' ? 'tiptoe' : 'bob');
+  faceDir(target - x);
+  moveTo(target, kind === 'sneak' ? 70 : cfg.walkSpeed * 1.8, finishHide);
+}
+
+function answerLater() {
+  window.buddy.answer('later');
+  clearTimers();
+  move = null;
+  setState('disappointed');
+  setPose('sad');
+  setBobbing(null);
+  setFlip(false);
+  showBubble(fill(rand(LATER_TEXTS)), false);
+  later(() => {
+    hideBubble();
+    setState('roaming');
+    roamNext();
+  }, 2200);
+}
+
+function roamNext() {
+  if (state !== 'roaming') return;
+  const w = figureWidth();
+  const sw = window.innerWidth;
+  const maxX = sw - w - 20;
+  const options = ['wander', 'wander', 'pause'];
+  if (cfg.sneaky) options.push('peek', 'stalk');
+  const action = rand(options);
+
+  if (action === 'pause') {
+    setPose('sad');
+    setBobbing(null);
+    later(roamNext, 1500 + Math.random() * 2500);
+  } else if (action === 'wander') {
+    const target = 20 + Math.random() * (maxX - 20);
+    setPose('sad');
+    setBobbing('bob-slow');
+    faceDir(target - x);
+    moveTo(target, cfg.walkSpeed * 0.55, () => later(roamNext, 600 + Math.random() * 1200));
+  } else if (action === 'peek') {
+    const left = x < sw / 2;
+    const edge = left ? -w * 0.65 : sw - w * 0.35;
+    const back = left ? 80 : maxX - 80;
+    setPose('peek');
+    setBobbing(null);
+    faceDir(edge - x);
+    moveTo(edge, 90, () => {
+      later(() => {
+        setPose('sad');
+        setBobbing('bob-slow');
+        faceDir(back - x);
+        moveTo(back, cfg.walkSpeed * 0.55, () => later(roamNext, 1000));
+      }, 2200);
+    });
+  } else {
+    if (!mouse) {
+      later(roamNext, 500);
+      return;
+    }
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const target = clamp(mouse.x - w / 2 + side * (w + 40), 20, maxX);
+    setPose('sneak');
+    setBobbing('tiptoe');
+    faceDir(target - x);
+    moveTo(target, 55, () => {
+      setPose('sad');
+      setBobbing(null);
+      showBubble(rand(WHISPERS), false);
+      later(() => {
+        hideBubble();
+        roamNext();
+      }, 2200);
+    });
+  }
+}
+
+function tick(time) {
+  const dt = Math.min((time - lastFrame) / 1000, 0.1);
+  lastFrame = time;
+  if (move) {
+    const delta = move.target - x;
+    const step = move.speed * dt;
+    if (Math.abs(delta) <= step) {
+      x = move.target;
+      place();
+      const done = move.done;
+      move = null;
+      if (done) done();
+    } else {
+      x += Math.sign(delta) * step;
+      place();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function inside(rect) {
+  return mouse && mouse.x >= rect.left && mouse.x <= rect.right && mouse.y >= rect.top && mouse.y <= rect.bottom;
+}
+
+function updateInteractive() {
+  let want = false;
+  if (actor.style.display !== 'none' && mouse) {
+    want = inside(figure.getBoundingClientRect());
+    if (!want && bubble.style.display !== 'none') want = inside(bubble.getBoundingClientRect());
+  }
+  if (want !== interactive) {
+    interactive = want;
+    window.buddy.setInteractive(want);
+  }
+}
+
+async function init() {
+  const setup = await window.buddy.getSetup();
+  cfg = setup.config;
+  actor.style.bottom = vehicle.style.bottom = (cfg.bottomMargin ?? 12) + 'px';
+
+  document.addEventListener('mousemove', (event) => {
+    mouse = { x: event.clientX, y: event.clientY };
+    updateInteractive();
+  });
+  setInterval(updateInteractive, 120);
+
+  $('yesBtn').addEventListener('click', answerYes);
+  $('laterBtn').addEventListener('click', answerLater);
+  figure.addEventListener('click', () => {
+    if (state === 'roaming') {
+      clearTimers();
+      move = null;
+      hideBubble();
+      settleThenAsk('again');
+    }
+  });
+
+  window.buddy.onAsk((payload) => {
+    if (payload.vehicle && VEHICLES[payload.vehicle]) {
+      clearTimers();
+      move = null;
+      finishHide();
+      current = { poses: payload.poses, placeholder: payload.placeholder };
+      enter('ride', payload.vehicle);
+    } else if (state === 'hidden') {
+      current = { poses: payload.poses, placeholder: payload.placeholder };
+      enter(wantsRide() ? 'ride' : rand(cfg.sneaky ? ['sneak', 'stalk', 'peek', 'rise', 'drop'] : ['plain']));
+    } else if (state === 'roaming') {
+      clearTimers();
+      move = null;
+      hideBubble();
+      settleThenAsk('again');
+    }
+  });
+
+  window.buddy.onSuppress(() => {
+    clearTimers();
+    move = null;
+    finishHide();
+  });
+
+  requestAnimationFrame((time) => {
+    lastFrame = time;
+    tick(time);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
